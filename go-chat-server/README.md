@@ -16,15 +16,30 @@ A simple two-user WebSocket chat server written in Go.
 - [coder/websocket](https://github.com/coder/websocket) - WebSocket support
 - [google/uuid](https://github.com/google/uuid) - Message IDs
 
-## How to Run
+## Quick Start
 
 ```bash
 cd go-chat-server
-go mod tidy
-go run ./cmd/server/
+make run          # build and start the server on port 8080
 ```
 
-The server starts on **port 8080**.
+## Makefile Targets
+
+| Target | Description |
+|--------|-------------|
+| `make build` | Compile binary to `bin/server` |
+| `make run` | Build and start the server |
+| `make test` | Run all tests with verbose output |
+| `make test-cover` | Run tests and display coverage |
+| `make vet` | Run `go vet` static analysis |
+| `make fmt` | Format all Go source files |
+| `make tidy` | Tidy module dependencies |
+| `make clean` | Remove build artifacts |
+| `make all` | Build, vet, test (full CI check) |
+
+Tests cover: registration, unregistration, logout, chat messaging, conversation
+history, full-text search (case-insensitive), message ordering, conversation
+isolation, and message survival across logout cycles.
 
 ## WebSocket URL
 
@@ -83,6 +98,28 @@ The server sends back JSON with the same `type` field:
 - `search` - A `messages` array
 - `error` - An `error` string
 
+## HTTP Endpoints
+
+### Logout
+
+```
+POST /logout?username=alice
+POST /logout
+Content-Type: application/json
+
+{"username":"alice"}
+```
+
+Removes the user from active sessions and closes their WebSocket connection.
+Messages already sent are preserved until the server restarts.
+
+### Health check
+
+```
+GET /health
+→ {"status":"ok"}
+```
+
 ## Architecture
 
 The Go implementation uses a **channel-based hub** instead of `sync.RWMutex`. The Hub runs as a single goroutine and owns all shared state:
@@ -91,7 +128,9 @@ The Go implementation uses a **channel-based hub** instead of `sync.RWMutex`. Th
 - `clients` map
 - `messagesByConversation` map
 
-The Hub receives commands through channels (`register`, `unregister`, `inbound`) and processes them sequentially. No other goroutine directly modifies the shared maps.
+The Hub receives commands through channels (`register`, `unregister`, `logout`,
+`inbound`) and processes them sequentially. No other goroutine directly modifies
+the shared maps.
 
 ## Testing Checklist
 

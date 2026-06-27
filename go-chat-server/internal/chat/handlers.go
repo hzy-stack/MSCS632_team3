@@ -11,10 +11,13 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+// Handler exposes the chat server's HTTP and WebSocket endpoints through
+// Echo.  All business logic is delegated to the Hub.
 type Handler struct {
 	hub *Hub
 }
 
+// NewHandler creates a Handler wired to the given Hub instance.
 func NewHandler(hub *Hub) *Handler {
 	handler := &Handler{
 		hub: hub,
@@ -23,6 +26,14 @@ func NewHandler(hub *Hub) *Handler {
 	return handler
 }
 
+// HandleWebSocket upgrades an HTTP GET request to a WebSocket connection.
+//
+// Flow:
+//  1. Extract and validate the "username" query parameter
+//  2. Accept the WebSocket upgrade
+//  3. Register the client with the hub (may fail for duplicates)
+//  4. On success: start WritePump in a goroutine, block on ReadPump
+//  5. On read error or disconnect: close the Send channel, unregister
 func (h *Handler) HandleWebSocket(c echo.Context) error {
 	username := c.QueryParam("username")
 
@@ -85,6 +96,10 @@ func (h *Handler) HandleWebSocket(c echo.Context) error {
 	return nil
 }
 
+// HandleLogout handles POST /logout.  It accepts the username via query
+// parameter (?username=alice) or JSON body ({"username":"alice"}).  On
+// success the user is removed from active sessions and their WebSocket
+// is closed, but all messages are preserved until the server restarts.
 func (h *Handler) HandleLogout(c echo.Context) error {
 	username := strings.TrimSpace(c.QueryParam("username"))
 

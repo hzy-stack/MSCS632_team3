@@ -1,3 +1,12 @@
+// Command server is the entry point for the Go chat server.  It starts an
+// Echo HTTP server on port 8080 with the following endpoints:
+//
+//	GET  /health   - health check (returns {"status":"ok"})
+//	GET  /ws       - WebSocket upgrade for real-time chat
+//	POST /logout   - actively log out a user by username
+//
+// The server uses middleware for request logging, panic recovery, and CORS.
+// All chat state is held in-memory by the Hub and is lost on restart.
 package main
 
 import (
