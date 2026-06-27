@@ -44,7 +44,7 @@ tidy:
 # ---- housekeeping ----
 
 clean:
-	rm -f $(BINARY) coverage.out
+	rm -f $(BINARY) demo coverage.out
 
 # ---- all ----
 
