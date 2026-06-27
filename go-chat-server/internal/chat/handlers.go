@@ -41,7 +41,9 @@ func (h *Handler) HandleWebSocket(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "username is required")
 	}
 
-	conn, err := websocket.Accept(c.Response(), c.Request(), nil)
+	conn, err := websocket.Accept(c.Response(), c.Request(), &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
 
 	if err != nil {
 		return err
