@@ -10,10 +10,11 @@ import "time"
 // Message type constants used as the "type" field in ClientRequest and
 // ServerResponse JSON payloads.
 const (
-	MessageTypeChat    = "chat"    // send a chat message to a recipient
-	MessageTypeHistory = "history" // request conversation history
-	MessageTypeSearch  = "search"  // full-text search across messages
-	MessageTypeError   = "error"   // server-side error response
+	MessageTypeChat      = "chat"       // send a chat message to a recipient
+	MessageTypeHistory   = "history"    // request conversation history
+	MessageTypeSearch    = "search"     // full-text search across messages
+	MessageTypeListUsers = "list_users" // list all registered users
+	MessageTypeError     = "error"      // server-side error response
 )
 
 // UserSession represents an authenticated user session.
@@ -47,11 +48,12 @@ type ClientRequest struct {
 }
 
 // ServerResponse is the JSON payload the server sends to a client over
-// the WebSocket.  Exactly one of Message, Messages, or Error will be set
-// depending on the response Type.
+// the WebSocket.  Exactly one of Message, Messages, Users, or Error will
+// be set depending on the response Type.
 type ServerResponse struct {
-	Type     string    `json:"type"`
-	Message  *Message  `json:"message,omitempty"`
-	Messages []Message `json:"messages,omitempty"`
-	Error    string    `json:"error,omitempty"`
+	Type     string        `json:"type"`
+	Message  *Message      `json:"message,omitempty"`
+	Messages []Message     `json:"messages,omitempty"`
+	Users    []UserSession `json:"users,omitempty"`
+	Error    string        `json:"error,omitempty"`
 }
