@@ -30,6 +30,7 @@ dist/
 *.o
 *.out
 *.exe
+/demo
 bin/
 obj/
 target/debug/
