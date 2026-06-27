@@ -194,6 +194,8 @@ func (h *Hub) handleInboundRequest(cmd inboundCommand) {
 		h.handleHistory(cmd)
 	} else if requestType == MessageTypeSearch {
 		h.handleSearch(cmd)
+	} else if requestType == MessageTypeListUsers {
+		h.handleListUsers(cmd)
 	} else {
 		errResp := ServerResponse{
 			Type:  MessageTypeError,
@@ -340,6 +342,23 @@ func (h *Hub) handleSearch(cmd inboundCommand) {
 	}
 
 	sendToClient(client, searchResp)
+}
+
+// handleListUsers returns a list of all registered users (both connected
+// and disconnected) along with their connection status.
+func (h *Hub) handleListUsers(cmd inboundCommand) {
+	users := make([]UserSession, 0, len(h.users))
+
+	for _, s := range h.users {
+		users = append(users, *s)
+	}
+
+	resp := ServerResponse{
+		Type:  MessageTypeListUsers,
+		Users: users,
+	}
+
+	sendToClient(cmd.client, resp)
 }
 
 // sendToClient is a non-blocking send on the client's buffered Send channel.
