@@ -21,6 +21,8 @@ A simple two-user WebSocket chat server written in Go.
 ```bash
 cd go-chat-server
 make run          # build and start the server on port 8080
+# in another terminal:
+make demo         # seed demo chat data (users, conversations)
 ```
 
 ## Makefile Targets
@@ -29,6 +31,7 @@ make run          # build and start the server on port 8080
 |--------|-------------|
 | `make build` | Compile binary to `bin/server` |
 | `make run` | Build and start the server |
+| `make demo` | Seed the running server with demo chat data |
 | `make test` | Run all tests with verbose output |
 | `make test-cover` | Run tests and display coverage |
 | `make vet` | Run `go vet` static analysis |
