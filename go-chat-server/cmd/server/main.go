@@ -21,9 +21,14 @@ import (
 func main() {
 	e := echo.New()
 
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowHeaders: []string{"*"},
+	}))
+
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
 
 	hub := chat.NewHub()
 
@@ -38,5 +43,5 @@ func main() {
 	e.GET("/ws", handler.HandleWebSocket)
 	e.POST("/logout", handler.HandleLogout)
 
-	e.Start(":8080")
+	e.Logger.Fatal(e.Start(":8080"))
 }
