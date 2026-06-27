@@ -1,3 +1,7 @@
+// Package chat implements a chat server hub that uses the actor pattern:
+// a single background goroutine owns all mutable state (users, clients,
+// and messages) and processes commands delivered through channels.
+// This design eliminates the need for mutexes entirely.
 package chat
 
 import (
@@ -10,25 +14,46 @@ import (
 	"github.com/google/uuid"
 )
 
+// --- Command types for the hub actor ---
+
+// registerCommand is sent when a new WebSocket client attempts to register.
+// The result channel carries nil on success or an error (e.g. duplicate
+// username).
 type registerCommand struct {
 	client *Client
 	result chan error
 }
 
+// unregisterCommand is sent when a WebSocket connection closes to mark
+// the user as disconnected (but preserves their session and messages).
 type unregisterCommand struct {
 	username string
 }
 
+// logoutCommand is sent when a user explicitly logs out via HTTP.
+// Unlike unregister, it fully removes the client and user session entries
+// from the hub maps.  Messages are preserved until server restart.
 type logoutCommand struct {
 	username string
 	result   chan error
 }
 
+// inboundCommand wraps a ClientRequest received from a WebSocket client.
+// The hub routes it to the appropriate handler based on the request Type.
 type inboundCommand struct {
 	request ClientRequest
 	client  *Client
 }
 
+// Hub is the central actor that owns all chat state and serialises all
+// mutations through a single goroutine (run).  External callers interact
+// with the hub exclusively via channels — there are no mutexes.
+//
+// State ownership:
+//   users     — active and disconnected user sessions (keyed by username)
+//   clients   — currently connected WebSocket clients (keyed by username)
+//   messagesByConversation — message history keyed by canonical
+//                              conversation key (see conversationKey)
 type Hub struct {
 	users                  map[string]*UserSession
 	clients                map[string]*Client
@@ -39,6 +64,8 @@ type Hub struct {
 	inbound                chan inboundCommand
 }
 
+// NewHub creates a Hub, initialises its internal maps and channels, and
+// immediately starts the background actor goroutine.
 func NewHub() *Hub {
 	hub := &Hub{
 		users:                  make(map[string]*UserSession),
@@ -55,6 +82,9 @@ func NewHub() *Hub {
 	return hub
 }
 
+// run is the single goroutine that owns all hub state.  It select-multiplexes
+// across the command channels, guaranteeing that all state mutations are
+// sequential and race-free.
 func (h *Hub) run() {
 	for {
 		select {
@@ -73,6 +103,9 @@ func (h *Hub) run() {
 	}
 }
 
+// handleRegister validates the username, rejects duplicates, and adds the
+// client to both the clients and users maps.  Errors are sent on
+// cmd.result; nil means success.
 func (h *Hub) handleRegister(cmd registerCommand) {
 	username := cmd.client.Username
 
@@ -100,6 +133,10 @@ func (h *Hub) handleRegister(cmd registerCommand) {
 	cmd.result <- nil
 }
 
+// handleLogout actively logs out a user: it deletes the client entry,
+// closes the underlying WebSocket connection (if present), and removes the
+// user session entirely.  Messages in messagesByConversation are NOT
+// touched so they survive until the next server restart.
 func (h *Hub) handleLogout(cmd logoutCommand) {
 	username := cmd.username
 
@@ -117,12 +154,17 @@ func (h *Hub) handleLogout(cmd logoutCommand) {
 	cmd.result <- nil
 }
 
+// Logout is the public API for logging out a user.  It sends a logoutCommand
+// to the hub actor and blocks until the operation completes.
 func (h *Hub) Logout(username string) error {
 	result := make(chan error, 1)
 	h.logout <- logoutCommand{username: username, result: result}
 	return <-result
 }
 
+// handleUnregister handles a passive WebSocket disconnect.  The client is
+// removed from the clients map and the user session is marked disconnected
+// but NOT deleted.  Messages are preserved.
 func (h *Hub) handleUnregister(cmd unregisterCommand) {
 	username := cmd.username
 
@@ -141,6 +183,8 @@ func (h *Hub) handleUnregister(cmd unregisterCommand) {
 	log.Printf("user disconnected: %s", username)
 }
 
+// handleInboundRequest dispatches an incoming WebSocket message to the
+// appropriate handler based on the request type field.
 func (h *Hub) handleInboundRequest(cmd inboundCommand) {
 	requestType := cmd.request.Type
 
@@ -159,6 +203,9 @@ func (h *Hub) handleInboundRequest(cmd inboundCommand) {
 	}
 }
 
+// handleChat processes a chat message: validates recipient and text,
+// creates a Message with a UUID, stores it under the canonical conversation
+// key, and delivers it to both sender (echo) and recipient (if online).
 func (h *Hub) handleChat(cmd inboundCommand) {
 	req := cmd.request
 	client := cmd.client
@@ -209,6 +256,9 @@ func (h *Hub) handleChat(cmd inboundCommand) {
 	}
 }
 
+// handleHistory returns all messages in the conversation between the
+// requesting user and the specified recipient.  A copy of the slice is
+// returned to avoid data races.
 func (h *Hub) handleHistory(cmd inboundCommand) {
 	req := cmd.request
 	client := cmd.client
@@ -243,6 +293,9 @@ func (h *Hub) handleHistory(cmd inboundCommand) {
 	sendToClient(client, historyResp)
 }
 
+// handleSearch performs a case-insensitive full-text search across all
+// conversations the requesting user participates in.  It matches against
+// message text, sender, and recipient fields.
 func (h *Hub) handleSearch(cmd inboundCommand) {
 	req := cmd.request
 	client := cmd.client
@@ -289,6 +342,9 @@ func (h *Hub) handleSearch(cmd inboundCommand) {
 	sendToClient(client, searchResp)
 }
 
+// sendToClient is a non-blocking send on the client's buffered Send channel.
+// If the channel is full the response is silently dropped (the client is
+// too slow).
 func sendToClient(c *Client, resp ServerResponse) {
 	select {
 	case c.Send <- resp:
