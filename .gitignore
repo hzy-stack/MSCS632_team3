@@ -1,0 +1,41 @@
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- Python (impl-language-*) ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+*.egg-info/
+
+# ---- Java ----
+*.class
+target/
+build/
+.gradle/
+*.jar
+
+# ---- Node / JavaScript ----
+node_modules/
+npm-debug.log*
+dist/
+
+# ---- C / C++ / Go / Rust ----
+*.o
+*.out
+*.exe
+bin/
+obj/
+target/debug/
+target/release/
+
+# ---- Logs / local data ----
+*.log
+history.json
+chat_data/
