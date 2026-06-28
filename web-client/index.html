@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Chat — Client</title>
+<title>Chat - Client</title>
 <style>
   :root{--accent:#2e5a88;--accent-d:#1f3864;--bg:#f4f6f9;--card:#fff;--line:#e2e8f0;--muted:#6b7280;}
   *{box-sizing:border-box}
@@ -12,9 +12,8 @@
   header h1{margin:0;font-size:16px;font-weight:700;flex:1;}
   header .who{font-size:13px;opacity:.92;}
   header button{background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:6px;padding:6px 11px;font-size:13px;cursor:pointer;}
-  .wrap{max-width:820px;margin:18px auto;padding:0 14px;}
+  .wrap{max-width:1040px;margin:18px auto;padding:0 14px;}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
-  /* connect */
   #connect{max-width:440px;margin:50px auto;padding:24px;}
   #connect h2{margin:0 0 4px;font-size:20px;}
   #connect p{margin:0 0 16px;color:var(--muted);font-size:13px;}
@@ -24,7 +23,19 @@
   .primary{width:100%;padding:11px;background:var(--accent);color:#fff;border:none;border-radius:9px;font-size:15px;cursor:pointer;}
   .hint{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5;}
   .err{color:#b91c1c;font-size:13px;margin-top:8px;min-height:18px;}
-  /* chat */
+  .shell{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:560px;}
+  .sidebar{border-right:1px solid var(--line);background:#fff;display:flex;flex-direction:column;min-width:0;}
+  .sideHead{padding:12px;border-bottom:1px solid var(--line);}
+  .sideTitle{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;}
+  .sideSearch{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;}
+  .contacts{overflow-y:auto;min-height:0;flex:1;}
+  .contact{width:100%;border:0;border-bottom:1px solid #eef1f4;background:#fff;text-align:left;padding:10px 12px;cursor:pointer;display:block;}
+  .contact:hover,.contact.active{background:#eef4fb;}
+  .contactName{font-size:14px;font-weight:700;color:#1f2937;display:flex;justify-content:space-between;gap:8px;}
+  .contactPreview{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;}
+  .contactTime{font-size:11px;color:var(--muted);font-weight:500;white-space:nowrap;}
+  .sideEmpty{color:var(--muted);font-size:13px;text-align:center;padding:24px 14px;line-height:1.5;}
+  .chatPane{display:flex;flex-direction:column;min-width:0;}
   .toolbar{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center;}
   .toolbar input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;}
   .toolbar .btn{background:#eef2f7;color:var(--accent-d);border:none;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;}
@@ -44,11 +55,15 @@
   .ritem{font-size:13px;padding:5px 0;border-bottom:1px solid #eef1f4;}
   .ritem b{color:var(--accent-d);}
   .pill{font-size:11px;background:#e7eef7;color:var(--accent-d);border-radius:10px;padding:2px 8px;}
+  @media (max-width:760px){
+    .shell{grid-template-columns:1fr;}
+    .sidebar{border-right:0;border-bottom:1px solid var(--line);max-height:230px;}
+    .stream{height:380px;}
+  }
 </style>
 </head>
 <body>
 
-<!-- ===== Connect screen ===== -->
 <div id="connectView">
   <div class="card" id="connect">
     <h2>Chat</h2>
@@ -71,238 +86,15 @@
     <button class="primary" id="connectBtn">Connect</button>
     <div class="err" id="connectErr"></div>
     <div class="hint">
-      Java usernames must be 3–20 letters/numbers. If running both servers, give one a
-      different port (both default to 8080). For the Go server, open this client from the
-      same origin as the server, or enable cross-origin WebSocket on it.
+      Java usernames must be 3-20 letters/numbers. If running both servers, give one a
+      different port.
     </div>
   </div>
 </div>
 
-<!-- ===== Chat screen ===== -->
 <div id="chatView" style="display:none;">
   <header>
     <h1>Chat</h1>
     <span class="who">You: <b id="meName"></b> <span class="pill" id="srvPill"></span></span>
     <button id="logoutBtn">Disconnect</button>
   </header>
-  <div class="wrap">
-    <div class="card">
-      <div class="toolbar">
-        <input type="text" class="peer" id="peer" placeholder="Chat with (username)…" />
-        <button class="btn" id="openBtn">Open chat</button>
-        <input type="text" id="search" placeholder="Search messages…" />
-        <button class="btn" id="searchBtn">Search</button>
-      </div>
-      <div class="stream" id="stream"></div>
-      <div class="results" id="results"><h3>Search results</h3><div id="resultsBody"></div></div>
-      <div class="statusbar" id="status"></div>
-      <div class="compose">
-        <input type="text" id="input" placeholder="Type a message…" autocomplete="off" />
-        <button id="sendBtn">Send</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-"use strict";
-const $ = id => document.getElementById(id);
-
-let cfg = { type:"go", http:"", ws:"" };
-let me = "", peer = "", sock = null;
-const messages = [];                 // {messageId, sender, recipient, text, timestamp}
-const seen = new Set();
-
-// ---- helpers ----
-function parseHost(input){
-  let s = input.trim().replace(/\/+$/,"");
-  const secure = /^https:\/\//.test(s) || /^wss:\/\//.test(s);
-  s = s.replace(/^(https?|wss?):\/\//,"");
-  return { http:(secure?"https":"http")+"://"+s, ws:(secure?"wss":"ws")+"://"+s };
-}
-function esc(t){ return String(t).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
-function fmtTime(ts){ const d=new Date(ts); return isNaN(d)?"" : d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
-function status(t, isErr){ const s=$("status"); s.textContent=t||""; s.style.color=isErr?"#b91c1c":""; }
-
-function addMessage(m){
-  if(!m || !m.text) return;
-  const id = m.messageId || (m.sender+"|"+m.recipient+"|"+m.text+"|"+m.timestamp);
-  if(seen.has(id)) return;
-  seen.add(id);
-  messages.push(m);
-  renderStream();
-}
-function renderStream(){
-  const stream = $("stream");
-  if(!peer){
-    stream.innerHTML = '<div class="empty">Enter a username above and click “Open chat” to start a conversation.</div>';
-    return;
-  }
-  const rows = messages.filter(m =>
-    (m.sender===me && m.recipient===peer) || (m.sender===peer && m.recipient===me));
-  if(!rows.length){
-    stream.innerHTML = '<div class="empty">No messages with '+esc(peer)+' yet — say hello.</div>';
-    return;
-  }
-  stream.innerHTML = rows.map(m=>{
-    const mine = m.sender===me;
-    return '<div class="msg '+(mine?"mine":"")+'">'+
-      '<span class="meta"><b>'+esc(m.sender)+'</b> · '+fmtTime(m.timestamp)+'</span>'+
-      esc(m.text)+'</div>';
-  }).join("");
-  stream.scrollTop = stream.scrollHeight;
-}
-
-// ---- connect ----
-async function connect(){
-  cfg.type = $("serverType").value;
-  const hp = parseHost($("host").value);
-  cfg.http = hp.http; cfg.ws = hp.ws;
-  me = $("username").value.trim();
-  $("connectErr").textContent = "";
-  if(!me){ $("connectErr").textContent = "Enter a username."; return; }
-
-  try{
-    if(cfg.type === "java"){
-      const r = await fetch(cfg.http + "/login", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ username: me })
-      });
-      const data = await r.json().catch(()=> ({}));
-      if(!r.ok){ $("connectErr").textContent = data.error || ("Login failed ("+r.status+")"); return; }
-      me = data.username || me;
-    }
-    openSocket();
-  }catch(e){
-    $("connectErr").textContent = "Could not reach server at " + cfg.http + ". Is it running?";
-  }
-}
-
-function openSocket(){
-  const url = cfg.ws + "/ws?username=" + encodeURIComponent(me);
-  sock = new WebSocket(url);
-
-  sock.onopen = () => {
-    $("connectView").style.display = "none";
-    $("chatView").style.display = "";
-    $("meName").textContent = me;
-    $("srvPill").textContent = cfg.type === "go" ? "Go" : "Java";
-    renderStream();
-    status("Connected to " + cfg.http);
-    $("peer").focus();
-  };
-
-  sock.onmessage = (ev) => {
-    let data; try{ data = JSON.parse(ev.data); }catch(_){ return; }
-    if(cfg.type === "go"){
-      if(data.type === "error"){ status(data.error || "Server error", true); return; }
-      if(data.type === "chat" && data.message){ addMessage(data.message); }
-      else if((data.type === "history" || data.type === "search") && Array.isArray(data.messages)){
-        if(data.type === "search") showResults(data.messages);
-        else data.messages.forEach(addMessage);
-      }
-    } else { // java: raw Message or {error}
-      if(data.error){ status(data.error, true); return; }
-      if(data.text){ addMessage(data); }
-    }
-  };
-
-  sock.onclose = () => {
-    if($("chatView").style.display !== "none"){ status("Disconnected from server.", true); }
-  };
-  sock.onerror = () => {
-    if($("connectView").style.display !== "none"){
-      $("connectErr").textContent = "WebSocket failed. Check the host" +
-        (cfg.type==="go" ? " and the Go server's cross-origin setting." : ".");
-    } else { status("Connection error.", true); }
-  };
-}
-
-function disconnect(){
-  try{ if(sock) sock.close(); }catch(_){}
-  if(cfg.type === "java"){ fetch(cfg.http + "/logout/" + encodeURIComponent(me), {method:"DELETE"}).catch(()=>{}); }
-  else { fetch(cfg.http + "/logout?username=" + encodeURIComponent(me), {method:"POST"}).catch(()=>{}); }
-  messages.length = 0; seen.clear(); peer = "";
-  $("chatView").style.display = "none";
-  $("connectView").style.display = "";
-}
-
-// ---- actions ----
-function openChat(){
-  peer = $("peer").value.trim();
-  $("results").style.display = "none";
-  if(!peer){ status("Enter a username to chat with."); return; }
-  status("Conversation with " + peer);
-  loadHistory();
-  renderStream();
-  $("input").focus();
-}
-
-function loadHistory(){
-  if(!peer) return;
-  if(cfg.type === "go"){
-    sock.send(JSON.stringify({ type:"history", recipient: peer }));
-  } else {
-    fetch(cfg.http + "/history/" + encodeURIComponent(me) + "/" + encodeURIComponent(peer))
-      .then(r=>r.json()).then(list=>{ if(Array.isArray(list)) list.forEach(addMessage); })
-      .catch(()=> status("Could not load history.", true));
-  }
-}
-
-function send(){
-  const text = $("input").value.trim();
-  if(!text) return;
-  if(!peer){ status("Open a chat first (enter a username above)."); return; }
-  if(!sock || sock.readyState !== WebSocket.OPEN){ status("Not connected.", true); return; }
-  const payload = cfg.type === "go"
-    ? { type:"chat", recipient: peer, text }
-    : { recipient: peer, text };
-  sock.send(JSON.stringify(payload));
-  $("input").value = "";
-  $("input").focus();
-}
-
-function doSearch(){
-  const q = $("search").value.trim();
-  if(!q) return;
-  if(cfg.type === "go"){
-    sock.send(JSON.stringify({ type:"search", query: q }));   // result via onmessage
-  } else {
-    fetch(cfg.http + "/search?q=" + encodeURIComponent(q))
-      .then(r=>r.json()).then(list=> showResults(Array.isArray(list)?list:[]))
-      .catch(()=> status("Search failed.", true));
-  }
-}
-function showResults(list){
-  const box = $("results"), body = $("resultsBody");
-  box.style.display = "block";
-  const q = $("search").value.trim();
-  if(!list.length){ body.innerHTML = '<div class="ritem">No matches.</div>'; return; }
-  body.innerHTML = list.map(m=>{
-    let t = esc(m.text);
-    if(q){ const safe=q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); t=t.replace(new RegExp(safe,"ig"),x=>"<mark>"+x+"</mark>"); }
-    return '<div class="ritem"><b>'+esc(m.sender)+'</b> &rarr; '+esc(m.recipient)+
-      ' · '+fmtTime(m.timestamp)+'<br>'+t+'</div>';
-  }).join("");
-}
-
-// ---- wire up ----
-$("connectBtn").onclick = connect;
-$("username").addEventListener("keydown", e=>{ if(e.key==="Enter") connect(); });
-$("logoutBtn").onclick = disconnect;
-$("openBtn").onclick = openChat;
-$("peer").addEventListener("keydown", e=>{ if(e.key==="Enter") openChat(); });
-$("sendBtn").onclick = send;
-$("input").addEventListener("keydown", e=>{ if(e.key==="Enter") send(); });
-$("searchBtn").onclick = doSearch;
-$("search").addEventListener("keydown", e=>{ if(e.key==="Enter") doSearch(); });
-
-// When this page is served by a server (not opened as a file), default the Host
-// field to that same origin so the WebSocket shares the origin (avoids Go's
-// cross-origin handshake rejection).
-if(location.protocol === "http:" || location.protocol === "https:"){
-  $("host").value = location.host;
-}
-</script>
-</body>
-</html>
