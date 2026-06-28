@@ -33,10 +33,17 @@
     </dependencies>
 
     <build>
+        <sourceDirectory>java-chat-server/main/java</sourceDirectory>
+        <resources>
+            <resource><directory>java-chat-server/main/resources</directory></resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.chat.ChatApplication</mainClass>
+                </configuration>
             </plugin>
         </plugins>
     </build>
