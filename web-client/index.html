@@ -69,18 +69,18 @@
     <h2>Chat</h2>
     <p>Connect to your Go or Java chat server.</p>
     <div class="row">
-      <label>Server</label>
+      <label for="serverType">Server</label>
       <select id="serverType">
         <option value="go">Go server</option>
         <option value="java">Java server</option>
       </select>
     </div>
     <div class="row">
-      <label>Host</label>
+      <label for="host">Host</label>
       <input type="text" id="host" value="localhost:8080" placeholder="localhost:8080" />
     </div>
     <div class="row">
-      <label>Your username</label>
+      <label for="username">Your username</label>
       <input type="text" id="username" placeholder="e.g. alice" autocomplete="off" />
     </div>
     <button class="primary" id="connectBtn">Connect</button>
@@ -98,3 +98,320 @@
     <span class="who">You: <b id="meName"></b> <span class="pill" id="srvPill"></span></span>
     <button id="logoutBtn">Disconnect</button>
   </header>
+  <div class="wrap">
+    <div class="card shell">
+      <aside class="sidebar">
+        <div class="sideHead">
+          <div class="sideTitle">Chats</div>
+          <input type="text" class="sideSearch" id="contactSearch" placeholder="Find contact..." />
+        </div>
+        <div class="contacts" id="contacts"></div>
+      </aside>
+
+      <main class="chatPane">
+        <div class="toolbar">
+          <input type="text" class="peer" id="peer" placeholder="Chat with (username)..." />
+          <button class="btn" id="openBtn">Open chat</button>
+          <input type="text" id="search" placeholder="Search messages..." />
+          <button class="btn" id="searchBtn">Search</button>
+        </div>
+        <div class="stream" id="stream"></div>
+        <div class="results" id="results"><h3>Search results</h3><div id="resultsBody"></div></div>
+        <div class="statusbar" id="status"></div>
+        <div class="compose">
+          <input type="text" id="input" placeholder="Type a message..." autocomplete="off" />
+          <button id="sendBtn">Send</button>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+let cfg = { type:"go", http:"", ws:"" };
+let me = "", peer = "", sock = null;
+const messages = [];
+const seen = new Set();
+const contacts = new Map();
+
+function parseHost(input){
+  let s = input.trim().replace(/\/+$/,"");
+  const secure = /^https:\/\//.test(s) || /^wss:\/\//.test(s);
+  s = s.replace(/^(https?|wss?):\/\//,"");
+  return { http:(secure?"https":"http")+"://"+s, ws:(secure?"wss":"ws")+"://"+s };
+}
+function esc(t){ return String(t).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function fmtTime(ts){ const d=new Date(ts); return isNaN(d)?"" : d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
+function status(t, isErr){ const s=$("status"); s.textContent=t||""; s.style.color=isErr?"#b91c1c":""; }
+function contactKey(){ return "chat.contacts." + cfg.type + "." + cfg.http + "." + me; }
+
+function normalizeMessage(m){
+  return {
+    messageId: m.messageId || m.id || m.uuid,
+    sender: m.sender || m.from || m.senderUsername,
+    recipient: m.recipient || m.to || m.recipientUsername,
+    text: m.text || m.content || m.message || "",
+    timestamp: m.timestamp || m.createdAt || m.time || Date.now()
+  };
+}
+
+function rememberContact(name, lastText, timestamp){
+  if(!name || name === me) return;
+  const old = contacts.get(name) || {};
+  contacts.set(name, {
+    name,
+    lastText: lastText || old.lastText || "",
+    timestamp: timestamp || old.timestamp || Date.now()
+  });
+  saveContacts();
+  renderContacts();
+}
+
+function saveContacts(){
+  try{ localStorage.setItem(contactKey(), JSON.stringify([...contacts.values()])); }catch(_){}
+}
+
+function loadSavedContacts(){
+  contacts.clear();
+  try{
+    const list = JSON.parse(localStorage.getItem(contactKey()) || "[]");
+    if(Array.isArray(list)) list.forEach(c => rememberContact(c.name, c.lastText, c.timestamp));
+  }catch(_){}
+  renderContacts();
+}
+
+function renderContacts(){
+  const box = $("contacts");
+  const q = $("contactSearch").value.trim().toLowerCase();
+  const list = [...contacts.values()]
+    .filter(c => !q || c.name.toLowerCase().includes(q))
+    .sort((a,b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+
+  if(!list.length){
+    box.innerHTML = '<div class="sideEmpty">No chats yet. Open a chat by username, then it will appear here.</div>';
+    return;
+  }
+
+  box.innerHTML = list.map(c =>
+    '<button class="contact '+(c.name===peer?"active":"")+'" data-name="'+esc(c.name)+'">'+
+      '<span class="contactName"><span>'+esc(c.name)+'</span><span class="contactTime">'+fmtTime(c.timestamp)+'</span></span>'+
+      '<span class="contactPreview">'+esc(c.lastText || "Open chat history")+'</span>'+
+    '</button>'
+  ).join("");
+}
+
+function addMessage(raw){
+  const m = normalizeMessage(raw);
+  if(!m || !m.text) return;
+  const id = m.messageId || (m.sender+"|"+m.recipient+"|"+m.text+"|"+m.timestamp);
+  if(seen.has(id)) return;
+  seen.add(id);
+  messages.push(m);
+  const other = m.sender === me ? m.recipient : m.sender;
+  rememberContact(other, m.text, m.timestamp);
+  renderStream();
+}
+
+function renderStream(){
+  const stream = $("stream");
+  renderContacts();
+  if(!peer){
+    stream.innerHTML = '<div class="empty">Choose a chat from the left, or enter a username above.</div>';
+    return;
+  }
+  const rows = messages.filter(m =>
+    (m.sender===me && m.recipient===peer) || (m.sender===peer && m.recipient===me));
+  if(!rows.length){
+    stream.innerHTML = '<div class="empty">No messages with '+esc(peer)+' yet. Say hello.</div>';
+    return;
+  }
+  stream.innerHTML = rows.map(m=>{
+    const mine = m.sender===me;
+    return '<div class="msg '+(mine?"mine":"")+'">'+
+      '<span class="meta"><b>'+esc(m.sender)+'</b> · '+fmtTime(m.timestamp)+'</span>'+
+      esc(m.text)+'</div>';
+  }).join("");
+  stream.scrollTop = stream.scrollHeight;
+}
+
+async function connect(){
+  cfg.type = $("serverType").value;
+  const hp = parseHost($("host").value);
+  cfg.http = hp.http; cfg.ws = hp.ws;
+  me = $("username").value.trim();
+  $("connectErr").textContent = "";
+  if(!me){ $("connectErr").textContent = "Enter a username."; return; }
+
+  try{
+    if(cfg.type === "java"){
+      const r = await fetch(cfg.http + "/login", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ username: me })
+      });
+      const data = await r.json().catch(()=> ({}));
+      if(!r.ok){ $("connectErr").textContent = data.error || ("Login failed ("+r.status+")"); return; }
+      me = data.username || me;
+    }
+    openSocket();
+  }catch(e){
+    $("connectErr").textContent = "Could not reach server at " + cfg.http + ". Is it running?";
+  }
+}
+
+function openSocket(){
+  const url = cfg.ws + "/ws?username=" + encodeURIComponent(me);
+  sock = new WebSocket(url);
+
+  sock.onopen = () => {
+    $("connectView").style.display = "none";
+    $("chatView").style.display = "";
+    $("meName").textContent = me;
+    $("srvPill").textContent = cfg.type === "go" ? "Go" : "Java";
+    loadSavedContacts();
+    renderStream();
+    status("Connected to " + cfg.http);
+    $("peer").focus();
+  };
+
+  sock.onmessage = (ev) => {
+    let data; try{ data = JSON.parse(ev.data); }catch(_){ return; }
+    if(cfg.type === "go"){
+      if(data.type === "error"){ status(data.error || "Server error", true); return; }
+      if(data.type === "chat" && data.message){ addMessage(data.message); }
+      else if(data.type === "contacts" && Array.isArray(data.contacts)){ setContacts(data.contacts); }
+      else if((data.type === "history" || data.type === "search") && Array.isArray(data.messages)){
+        if(data.type === "search") showResults(data.messages.map(normalizeMessage));
+        else {
+          data.messages.forEach(addMessage);
+          status("Conversation with " + peer);
+        }
+      }
+    } else {
+      if(data.error){ status(data.error, true); return; }
+      if(data.text){ addMessage(data); }
+    }
+  };
+
+  sock.onclose = () => {
+    if($("chatView").style.display !== "none"){ status("Disconnected from server.", true); }
+  };
+  sock.onerror = () => {
+    if($("connectView").style.display !== "none"){
+      $("connectErr").textContent = "WebSocket failed. Check the host" +
+        (cfg.type==="go" ? " and the Go server's cross-origin setting." : ".");
+    } else { status("Connection error.", true); }
+  };
+}
+
+function setContacts(list){
+  list.forEach(c => {
+    if(typeof c === "string") rememberContact(c);
+    else rememberContact(c.name || c.username || c.contact, c.lastText || c.preview, c.timestamp || c.lastMessageAt);
+  });
+  renderContacts();
+}
+
+function disconnect(){
+  try{ if(sock) sock.close(); }catch(_){}
+  if(cfg.type === "java"){ fetch(cfg.http + "/logout/" + encodeURIComponent(me), {method:"DELETE"}).catch(()=>{}); }
+  else { fetch(cfg.http + "/logout?username=" + encodeURIComponent(me), {method:"POST"}).catch(()=>{}); }
+  messages.length = 0; seen.clear(); contacts.clear(); peer = "";
+  $("chatView").style.display = "none";
+  $("connectView").style.display = "";
+}
+
+function openChat(name){
+  peer = (name || $("peer").value).trim();
+  $("peer").value = peer;
+  $("results").style.display = "none";
+  if(!peer){ status("Enter a username to chat with."); return; }
+  rememberContact(peer);
+  status("Loading history with " + peer + "...");
+  renderStream();
+  loadHistory();
+  $("input").focus();
+}
+
+function loadHistory(){
+  if(!peer) return;
+  if(cfg.type === "go"){
+    sock.send(JSON.stringify({ type:"history", recipient: peer }));
+  } else {
+    fetch(cfg.http + "/history/" + encodeURIComponent(me) + "/" + encodeURIComponent(peer))
+      .then(r=>r.json()).then(list=>{
+        if(Array.isArray(list)){
+          list.forEach(addMessage);
+          status("Conversation with " + peer);
+        }
+      })
+      .catch(()=> status("Could not load history.", true));
+  }
+}
+
+function send(){
+  const text = $("input").value.trim();
+  if(!text) return;
+  if(!peer){ status("Open a chat first."); return; }
+  if(!sock || sock.readyState !== WebSocket.OPEN){ status("Not connected.", true); return; }
+  const timestamp = new Date().toISOString();
+  const payload = cfg.type === "go"
+    ? { type:"chat", recipient: peer, text }
+    : { sender: me, recipient: peer, text, timestamp };
+  sock.send(JSON.stringify(payload));
+  if(cfg.type === "java"){
+    addMessage(payload);
+    status("Sent to " + peer);
+  }
+  $("input").value = "";
+  $("input").focus();
+}
+
+function doSearch(){
+  const q = $("search").value.trim();
+  if(!q) return;
+  if(cfg.type === "go"){
+    sock.send(JSON.stringify({ type:"search", query: q }));
+  } else {
+    fetch(cfg.http + "/search?q=" + encodeURIComponent(q))
+      .then(r=>r.json()).then(list=> showResults(Array.isArray(list)?list.map(normalizeMessage):[]))
+      .catch(()=> status("Search failed.", true));
+  }
+}
+
+function showResults(list){
+  const box = $("results"), body = $("resultsBody");
+  box.style.display = "block";
+  const q = $("search").value.trim();
+  if(!list.length){ body.innerHTML = '<div class="ritem">No matches.</div>'; return; }
+  body.innerHTML = list.map(m=>{
+    let t = esc(m.text);
+    if(q){ const safe=q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); t=t.replace(new RegExp(safe,"ig"),x=>"<mark>"+x+"</mark>"); }
+    return '<div class="ritem"><b>'+esc(m.sender)+'</b> &rarr; '+esc(m.recipient)+
+      ' · '+fmtTime(m.timestamp)+'<br>'+t+'</div>';
+  }).join("");
+}
+
+$("connectBtn").onclick = connect;
+$("username").addEventListener("keydown", e=>{ if(e.key==="Enter") connect(); });
+$("logoutBtn").onclick = disconnect;
+$("openBtn").onclick = () => openChat();
+$("peer").addEventListener("keydown", e=>{ if(e.key==="Enter") openChat(); });
+$("sendBtn").onclick = send;
+$("input").addEventListener("keydown", e=>{ if(e.key==="Enter") send(); });
+$("searchBtn").onclick = doSearch;
+$("search").addEventListener("keydown", e=>{ if(e.key==="Enter") doSearch(); });
+$("contactSearch").addEventListener("input", renderContacts);
+$("contacts").addEventListener("click", e => {
+  const btn = e.target.closest(".contact");
+  if(btn) openChat(btn.dataset.name);
+});
+
+if(location.protocol === "http:" || location.protocol === "https:"){
+  $("host").value = location.host;
+}
+</script>
+</body>
+</html>
