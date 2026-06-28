@@ -22,7 +22,8 @@ public class ChatStore {
     // Maps conversation key (e.g. "alice:bob") -> list of messages
     private final ConcurrentHashMap<String, List<Message>> messagesByConversation = new ConcurrentHashMap<>();
 
-    // Returns a consistent key regardless of argument order
+    // Sorting the two names alphabetically ensures alice+bob and bob+alice
+    // always produce the same key, so both users share one message list.
     public static String conversationKey(String u1, String u2) {
         return u1.compareTo(u2) <= 0 ? u1 + ":" + u2 : u2 + ":" + u1;
     }
@@ -36,6 +37,8 @@ public class ChatStore {
     }
 
     public List<Message> getOrCreateConversation(String key) {
+        // computeIfAbsent is atomic on ConcurrentHashMap, preventing two threads
+        // from each seeing null and creating duplicate lists for the same conversation.
         return messagesByConversation.computeIfAbsent(
                 key,
                 k -> Collections.synchronizedList(new ArrayList<>())

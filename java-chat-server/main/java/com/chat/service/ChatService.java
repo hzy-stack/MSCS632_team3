@@ -1,6 +1,7 @@
 package com.chat.service;
 
 import com.chat.model.Message;
+import com.chat.model.ServerResponse;
 import com.chat.model.UserSession;
 import com.chat.store.ChatStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -55,6 +56,9 @@ public class ChatService {
 
     // Called by the WebSocket handler when a connection closes
     public void removeSession(String username, WebSocketSession session) {
+        // Two-argument remove only deletes the entry if the value still matches
+        // this session, preventing accidental removal of a newer session that
+        // replaced this one during a reconnect.
         store.getActiveConnections().remove(username, session);
         UserSession userSession = store.getUsers().get(username);
         if (userSession != null) {
@@ -62,25 +66,29 @@ public class ChatService {
         }
     }
 
-    // Stores the message and pushes it to both recipient and sender via WebSocket
     public void sendMessage(String sender, String recipient, String text) throws IOException {
         Message message = new Message(sender, recipient, text);
         String key = ChatStore.conversationKey(sender, recipient);
         store.getOrCreateConversation(key).add(message);
 
-        String json = objectMapper.writeValueAsString(message);
+        String json = objectMapper.writeValueAsString(ServerResponse.chat(message));
         push(store.getActiveConnections().get(recipient), json);
+        // Echo back to the sender so their UI updates through the same WebSocket
+        // path as the recipient, without needing a separate HTTP response.
         push(store.getActiveConnections().get(sender), json);
     }
 
     private void push(WebSocketSession session, String json) {
         if (session != null && session.isOpen()) {
             try {
+                // WebSocketSession is not thread-safe for concurrent writes;
+                // synchronizing on the session prevents interleaved frames.
                 synchronized (session) {
                     session.sendMessage(new TextMessage(json));
                 }
             } catch (IOException e) {
-                // The afterConnectionClosed handler will clean up the dead session
+                // Sending failed because the session is closing; the
+                // afterConnectionClosed callback will remove it from the store.
             }
         }
     }
@@ -91,6 +99,8 @@ public class ChatService {
         if (history == null) {
             return List.of();
         }
+        // synchronizedList makes individual operations thread-safe but not
+        // iteration; an explicit synchronized block is required here.
         synchronized (history) {
             return new ArrayList<>(history);
         }

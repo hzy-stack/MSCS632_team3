@@ -24,7 +24,8 @@ public class UsernameHandshakeInterceptor implements HandshakeInterceptor {
                 }
             }
         }
-        return false; // reject handshake if no username provided
+        // Returning false causes Spring to reject the WebSocket upgrade with 403.
+        return false;
     }
 
     @Override
